@@ -1,0 +1,5 @@
+{
+  "name": "api",
+  "description": "Tests de sécurité d'API REST : reconnaissance des endpoints, fuzzing et attaques de tokens JWT.",
+  "version": "0.1.0"
+}

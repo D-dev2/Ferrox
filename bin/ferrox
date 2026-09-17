@@ -1,0 +1,193 @@
+#!/data/data/com.termux/files/usr/bin/bash
+#=============================================================================
+#  Ferrox — CLI wrapper principal (point d'entrée unique)
+#-----------------------------------------------------------------------------
+#  Rôle : dispatcher les commandes utilisateur vers la bonne action.
+#
+#  Commandes :
+#    ferrox rivet list                      → tous les Rivets (état actif/inactif)
+#    ferrox rivet install <nom>             → installe un Rivet
+#    ferrox rivet remove <nom>              → désinstalle un Rivet
+#    ferrox tool  list [--rivet <nom>]      → liste les outils d'un Rivet / actifs
+#    ferrox tool  add <nom> --rivet <nom>   → ajoute un outil à un Rivet
+#    ferrox tool  remove <nom> --rivet <nom>→ retire un outil d'un Rivet
+#    ferrox update                          → met à jour Ferrox + Rivets actifs
+#    ferrox uninstall                       → désinstalle tout Ferrox
+#    ferrox help
+#=============================================================================
+
+set -e
+
+#------------------------------------------------------------------------------
+#  Constantes et chemins
+#  FEROX_HOME : racine du projet. On remonte d'un cran depuis "bin/" afin que
+#  le CLI fonctionne quel que soit le répertoire d'appel.
+#------------------------------------------------------------------------------
+FEROX_HOME="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+RIVETS_DIR="$FEROX_HOME/rivets"              # un sous-dossier par Rivet
+STATE_FILE="$FEROX_HOME/state/active-rivets.txt"  # source de vérité (installé ou pas)
+VERSION_FILE="$FEROX_HOME/VERSION"
+TOOLS_DIR="$HOME/ferrox-tools"               # cible des outils clonés (clone.list)
+
+#------------------------------------------------------------------------------
+#  Utilitaires d'affichage
+#  Langage simple, pensé pour un débutant :
+#  [*] = étape en cours, [✓] = succès, [✗] = erreur.
+#------------------------------------------------------------------------------
+msg_info() { printf '[*] %s\n' "$*"; }
+msg_ok()   { printf '[✓] %s\n' "$*"; }
+msg_err()  { printf '[✗] %s\n' "$*" >&2; }
+
+#------------------------------------------------------------------------------
+#  Lectures d'en-tête
+#------------------------------------------------------------------------------
+read_version() { cat "$VERSION_FILE"; }
+
+#------------------------------------------------------------------------------
+#  Fichier d'état : state/active-rivets.txt
+#  Source de vérité UNIQUE : on ne juge « installé ou non » que par lui.
+#  Idempotence : la vérification par grep AVANT insertion/retrait garantit
+#  qu'aucun doublon n'apparaît et que le format n'est jamais cassé.
+#------------------------------------------------------------------------------
+rivet_is_active() { grep -qxF "$1" "$STATE_FILE" 2>/dev/null; }
+
+add_active_rivet() {
+    # TODO(ferrox) : si la ligne est déjà présente → ne rien faire (idempotent),
+    # sinon l'ajouter en fin de fichier.
+    msg_info "Ajout de '$1' aux Rivets actifs (à implémenter)."
+}
+
+remove_active_rivet() {
+    # TODO(ferrox) : retirer la ligne exacte sans toucher aux autres
+    # (grep -vxF puis réécriture atomique du fichier d'état).
+    msg_info "Retrait de '$1' des Rivets actifs (à implémenter)."
+}
+
+#------------------------------------------------------------------------------
+#  Installation / désinstallation d'outils, par type de manifeste
+#  Chaque fonction attend $1 = dossier du Rivet (ex: rivets/web).
+#
+#  Type 1 — Outils Go (go.lock)     : ligne  nom=chemin_module@version
+#      Règle : JAMAIS "@latest" ; la version est TOUJOURS épinglée.
+#      TODO(ferrox) : go install -v "$chemin@$version"
+#  Type 2 — Outils pip (pip.list)   : ligne  nom=paquet_pypi[==version]
+#      TODO(ferrox) : pip install "$paquet==$version" si version fournie.
+#  Type 3 — Outils clonés (clone.list) : ligne  nom=url_git
+#      TODO(ferrox) : git clone --depth 1 "$url" "$TOOLS_DIR/$nom",
+#      puis installer les dépendances si requirements.txt existe.
+#------------------------------------------------------------------------------
+install_go_tools()    { :; }   # TODO(ferrox) : implémentation ci-dessus
+install_pip_tools()   { :; }   # TODO(ferrox) : implémentation ci-dessus
+install_clone_tools() { :; }   # TODO(ferrox) : implémentation ci-dessus
+remove_go_tools()     { :; }   # TODO(ferrox) : suppression des binaires Go
+remove_pip_tools()    { :; }   # TODO(ferrox) : pip uninstall des paquets
+remove_clone_tools()  { :; }   # TODO(ferrox) : rm -rf "$TOOLS_DIR/$nom"
+
+#------------------------------------------------------------------------------
+#  Commande : ferrox rivet list | install <nom> | remove <nom>
+#------------------------------------------------------------------------------
+cmd_rivet() {
+    case "$1" in
+        list)
+            # TODO(ferrox) : parcourir rivets/*/meta.json, afficher nom +
+            # description, et marquer [ACTIF] ceux présents dans
+            # state/active-rivets.txt.
+            msg_info "Liste des Rivets (à implémenter)."
+            ;;
+        install)
+            # TODO(ferrox) : installer les 3 manifestes du Rivet, puis
+            # l'enregistrer dans state/active-rivets.txt (idempotent).
+            msg_info "Installation du Rivet '$2' (à implémenter)."
+            ;;
+        remove)
+            # TODO(ferrox) : désinstaller les outils du Rivet,
+            # puis le retirer de state/active-rivets.txt.
+            msg_info "Suppression du Rivet '$2' (à implémenter)."
+            ;;
+        *) usage_rivet ;;
+    esac
+}
+
+#------------------------------------------------------------------------------
+#  Commande : ferrox tool list [--rivet <nom>] | add | remove
+#------------------------------------------------------------------------------
+cmd_tool() {
+    case "$1" in
+        list)
+            # TODO(ferrox) : sans --rivet → afficher les outils du Rivet actif
+            # unique, ou de TOUS les Rivets actifs (groupés) s'il y en a
+            # plusieurs ; avec --rivet → uniquement ce Rivet.
+            msg_info "Liste des outils (à implémenter)."
+            ;;
+        add)
+            # TODO(ferrox) : déterminer le bon manifeste selon le type
+            # (go/pip/clone), y insérer la ligne SANS doublon, puis installer.
+            msg_info "Ajout de l'outil '$2' (à implémenter)."
+            ;;
+        remove)
+            # TODO(ferrox) : désinstaller l'outil ET supprimer la ligne
+            # correspondante du manifeste de ce Rivet.
+            msg_info "Suppression de l'outil '$2' (à implémenter)."
+            ;;
+        *) usage_tool ;;
+    esac
+}
+
+#------------------------------------------------------------------------------
+#  Commandes globales : update / uninstall / help
+#------------------------------------------------------------------------------
+cmd_update() {
+    # TODO(ferrox) : comparer VERSION local/distant, puis mettre à jour le
+    # cœur de Ferrox et re-pépingler les outils des Rivets actifs.
+    msg_info "Mise à jour de Ferrox (à implémenter)."
+}
+
+cmd_uninstall() {
+    # TODO(ferrox) : désinstaller tous les Rivets, vider state/ et $TOOLS_DIR,
+    # retirer la config shell injectée, demander confirmation, puis rm -rf.
+    msg_info "Désinstallation de Ferrox (à implémenter)."
+}
+
+usage_rivet() {
+    cat <<'EOF'
+Usage : ferrox rivet list | install <nom> | remove <nom>
+EOF
+}
+
+usage_tool() {
+    cat <<'EOF'
+Usage :
+  ferrox tool list [--rivet <nom>]
+  ferrox tool add <nom> --rivet <nom_rivet>
+  ferrox tool remove <nom> --rivet <nom_rivet>
+EOF
+}
+
+usage() {
+    cat <<'EOF'
+Ferrox — outil de pentest léger pour Termux.
+
+Commandes :
+  ferrox rivet list
+  ferrox rivet install <nom>
+  ferrox rivet remove <nom>
+  ferrox tool list [--rivet <nom>]
+  ferrox tool add <nom> --rivet <nom_rivet>
+  ferrox tool remove <nom> --rivet <nom_rivet>
+  ferrox update
+  ferrox uninstall
+  ferrox help
+EOF
+}
+
+#------------------------------------------------------------------------------
+#  Dispatch principal : tout passe par ici, aucun autre point d'entrée.
+#------------------------------------------------------------------------------
+case "${1:-help}" in
+    rivet)      shift; cmd_rivet "$@" ;;
+    tool)       shift; cmd_tool "$@" ;;
+    update)     cmd_update ;;
+    uninstall)  cmd_uninstall ;;
+    help|-h|--help|"") usage ;;
+    *) msg_err "Commande inconnue : '$1'"; usage; exit 1 ;;
+esac

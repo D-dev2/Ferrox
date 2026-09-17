@@ -1,0 +1,5 @@
+{
+  "name": "web",
+  "description": "Reconnaissance et tests de sécurité d'applications web : énumération de sous-domaines et d'URLs, fuzzing, détection XSS et paramètres cachés.",
+  "version": "0.1.0"
+}
