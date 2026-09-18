@@ -17,28 +17,34 @@ set -e
 #  install.sh se situe À LA RACINE de Ferrox : FEROX_HOME = son répertoire.
 #------------------------------------------------------------------------------
 FEROX_HOME="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
-RIVETS_DIR="$FEROX_HOME/rivets"
-STATE_FILE="$FEROX_HOME/state/active-rivets.txt"
-TOOLS_DIR="$HOME/ferrox-tools"
-PIP_BIN="pip"                        # « pip » ou « pip3 » selon le système
 
 #------------------------------------------------------------------------------
-#  Utilitaires d'affichage
+#  Logique partagée avec update.sh : utilitaires d'affichage (_log, msg_info,
+#  msg_ok, msg_err) et installation par type de manifeste (install_*_from_rivet,
+#  mode par défaut "install").
 #------------------------------------------------------------------------------
-msg_info() { printf '[*] %s\n' "$*"; }
-msg_ok()   { printf '[✓] %s\n' "$*"; }
-msg_err()  { printf '[✗] %s\n' "$*" >&2; }
+source "$FEROX_HOME/lib/common.sh"
+
+RIVETS_DIR="$FEROX_HOME/rivets"
+STATE_FILE="$FEROX_HOME/state/active-rivets.txt"
+LOG_FILE="$FEROX_HOME/state/install.log"
+TOOLS_DIR="$HOME/ferrox-tools"
+PIP_BIN="pip"                        # « pip » ou « pip3 » selon le système
 
 #------------------------------------------------------------------------------
 #  Section 1 : vérification des prérequis Termux
 #  Vérifie la présence de go, python, pip et git. Si l'un manque, affiche un
 #  [✗] explicite (le paquet à installer) puis quitte — jamais de suite sans
-#  prérequis. Crée aussi state/ s'il n'existe pas encore.
+#  prérequis. Crée aussi state/ (dossier ET fichiers) s'ils n'existent pas.
 #------------------------------------------------------------------------------
 check_prereqs() {
-    # Sur un dépôt cloné frais, state/ peut ne pas exister :
-    # on le crée pour que l'écriture dans active-rivets.txt ne plante pas.
+    # Sur un dépôt cloné frais, state/ peut ne pas exister : on crée le
+    # dossier ET le fichier active-rivets.txt, sinon le premier `grep` dans
+    # install_rivet affiche une erreur parasite ("No such file or directory")
+    # même si le comportement final reste correct.
     mkdir -p "$(dirname "$STATE_FILE")"
+    touch "$STATE_FILE"
+    touch "$LOG_FILE"
 
     if ! command -v go >/dev/null 2>&1; then
         msg_err "go est introuvable. Installe-le avec : pkg install golang"
@@ -64,126 +70,10 @@ check_prereqs() {
 }
 
 #------------------------------------------------------------------------------
-#  Section 2 : installation par type de manifeste
-#  Chaque fonction attend $1 = dossier du Rivet (ex: rivets/web).
-#  Toutes les lignes vides et commentaires (#) sont ignorés à la lecture.
-#  Un outil qui échoue ne bloque PAS les suivants : il est signalé et on
-#  continue (le [✓] final récapitule le nombre de réussites sur le total).
+#  Section 2 : installation par type de manifeste (Go / pip / clone)
+#  Implémentée dans lib/common.sh (install_go_from_rivet, install_pip_from_rivet,
+#  install_clone_from_rivet) — appelée ici avec mode "install" par défaut.
 #------------------------------------------------------------------------------
-
-#  2.1 — Outils Go (go.lock) : ligne « nom=chemin_module@version »
-#       Règle : JAMAIS "@latest", la version est TOUJOURS épinglée.
-#       Installation : go install -v "$chemin@$version"
-install_go_from_rivet() {
-    local rivet_dir="$1"
-    local go_lock="$rivet_dir/go.lock"
-    local line name path_at_version ok=0 total=0
-
-    [ -f "$go_lock" ] || return 0
-
-    while IFS= read -r line || [ -n "$line" ]; do
-        case "$line" in
-            ''|'#'*) continue ;;
-        esac
-        # Split sur le premier « = » : nom d'un côté, chemin@version de l'autre.
-        name="${line%%=*}"
-        path_at_version="${line#*=}"
-        [ -z "$path_at_version" ] && continue
-
-        total=$((total + 1))
-        msg_info "Installation de '$name' (Go) ..."
-        if ! go install -v "$path_at_version"; then
-            msg_err "Échec de l'installation de '$name' (voir l'erreur ci-dessus)."
-            continue
-        fi
-        ok=$((ok + 1))
-        msg_ok "'$name' installé."
-    done < "$go_lock"
-
-    msg_ok "$ok outil(s) Go installé(s) sur $total."
-}
-
-#  2.2 — Outils pip (pip.list) : ligne « nom=paquet_pypi » ou « nom=paquet==version »
-#       Si la ligne contient déjà « == », la version épinglée est passée telle
-#       quelle à pip ; sinon pip installe la dernière version du paquet.
-install_pip_from_rivet() {
-    local rivet_dir="$1"
-    local pip_list="$rivet_dir/pip.list"
-    local line name pkg ok=0 total=0
-
-    [ -f "$pip_list" ] || return 0
-
-    while IFS= read -r line || [ -n "$line" ]; do
-        case "$line" in
-            ''|'#'*) continue ;;
-        esac
-        # Split sur le premier « = » : nom d'un côté, paquet de l'autre.
-        name="${line%%=*}"
-        pkg="${line#*=}"
-        [ -z "$pkg" ] && continue
-
-        total=$((total + 1))
-        if [[ "$pkg" == *==* ]]; then
-            msg_info "Installation de '$name' ($pkg) ..."
-        else
-            msg_info "Installation de '$name' (paquet : $pkg, dernière version) ..."
-        fi
-        if ! "$PIP_BIN" install "$pkg"; then
-            msg_err "Échec de l'installation de '$name' (voir l'erreur ci-dessus)."
-            continue
-        fi
-        ok=$((ok + 1))
-        msg_ok "'$name' installé."
-    done < "$pip_list"
-
-    msg_ok "$ok outil(s) pip installé(s) sur $total."
-}
-
-#  2.3 — Outils clonés (clone.list) : ligne « nom=url_git »
-#       Clone dédié dans $TOOLS_DIR (idempotent : si le dossier existe déjà,
-#       on passe), puis installation des dépendances si requirements.txt.
-install_clone_from_rivet() {
-    local rivet_dir="$1"
-    local clone_list="$rivet_dir/clone.list"
-    local line name url ok=0 total=0
-
-    [ -f "$clone_list" ] || return 0
-    mkdir -p "$TOOLS_DIR"
-
-    while IFS= read -r line || [ -n "$line" ]; do
-        case "$line" in
-            ''|'#'*) continue ;;
-        esac
-        # Split sur le premier « = » : nom d'un côté, URL git de l'autre.
-        name="${line%%=*}"
-        url="${line#*=}"
-        [ -z "$url" ] && continue
-
-        total=$((total + 1))
-        if [ -d "$TOOLS_DIR/$name" ]; then
-            msg_info "'$name' : déjà cloné, on passe."
-            continue
-        fi
-
-        msg_info "Clone de '$name' ..."
-        if ! git clone --depth 1 "$url" "$TOOLS_DIR/$name"; then
-            msg_err "Échec du clone de '$name' (voir l'erreur ci-dessus)."
-            continue
-        fi
-        ok=$((ok + 1))
-        msg_ok "'$name' cloné."
-
-        # Dépendances Python éventuelles du repo cloné.
-        if [ -f "$TOOLS_DIR/$name/requirements.txt" ]; then
-            msg_info "Installation des dépendances de '$name' ..."
-            if ! "$PIP_BIN" install -r "$TOOLS_DIR/$name/requirements.txt"; then
-                msg_err "Échec des dépendances de '$name' (voir l'erreur ci-dessus)."
-            fi
-        fi
-    done < "$clone_list"
-
-    msg_ok "$ok outil(s) cloné(s) sur $total."
-}
 
 #------------------------------------------------------------------------------
 #  Section 3 : installation complète d'un Rivet
@@ -221,7 +111,8 @@ install_rivet() {
 #  Section 4 : boucle principale + gestion du pseudo-Rivet "all"
 #  « all » est remplacé par la liste des Rivets disponibles (sous-dossiers
 #  de rivets/ contenant un meta.json) avant la boucle for, de sorte que la
-#  boucle traite chaque Rivet individuellement.
+#  boucle traite chaque Rivet individuellement. Un compteur global permet
+#  d'afficher un résumé fidèle même en cas d'échecs mélangés.
 #------------------------------------------------------------------------------
 main() {
     if [ $# -eq 0 ]; then
@@ -245,11 +136,25 @@ main() {
         set -- "${rivets_list[@]}"
     fi
 
+    local rivets_ok=0 rivets_fail=0
     for rivet in "$@"; do
         # Un Rivet inconnu renvoie 1 : on le signale et on continue les autres.
-        install_rivet "$rivet" || true
+        if install_rivet "$rivet"; then
+            rivets_ok=$((rivets_ok + 1))
+        else
+            rivets_fail=$((rivets_fail + 1))
+        fi
     done
-    msg_ok "Installation terminée."
+
+    # Résumé global fidèle : distingue succès et échecs plutôt qu'un
+    # "Installation terminée" ambigu qui masquerait un Rivet introuvable.
+    if [ "$rivets_fail" -eq 0 ]; then
+        msg_ok "Installation terminée : $rivets_ok Rivet(s) installé(s)."
+    else
+        msg_err "Installation terminée avec des erreurs : $rivets_ok Rivet(s) installé(s), $rivets_fail échec(s)."
+    fi
+
+    msg_info "Journal détaillé disponible dans : $LOG_FILE"
 }
 
 main "$@"
