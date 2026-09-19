@@ -19,6 +19,33 @@ msg_ok()   { printf '[✓] %s\n' "$*"; _log "OK    $*"; }
 msg_err()  { printf '[✗] %s\n' "$*" >&2; _log "ERR   $*"; }
 
 #------------------------------------------------------------------------------
+#  Passe partout : s'assure que ~/go/bin (où « go install » dépose ses
+#  binaires) est dans le PATH, sinon ffuf, httpx… ne sont pas trouvés en
+#  ligne de commande. Effet PERSISTANT : la ligne d'export est ajoutée une
+#  seule fois à ~/.zshrc (sinon ~/.bashrc). Effet IMMÉDIAT : l'export est
+#  appliqué à la session courante du script. Non bloquant : si l'écriture
+#  du fichier rc échoue, la session courante est quand même corrigée.
+#------------------------------------------------------------------------------
+ensure_go_path() {
+    local rc_file="$HOME/.zshrc"
+    local line='export PATH="$PATH:$HOME/go/bin"'
+    [ -f "$rc_file" ] || rc_file="$HOME/.bashrc"
+
+    if ! grep -qxF "$line" "$rc_file" 2>/dev/null; then
+        if printf '%s\n' "$line" >> "$rc_file" 2>/dev/null; then
+            msg_info "PATH mis à jour dans $rc_file — relance ton terminal ou fais 'source $rc_file'."
+        else
+            msg_info "Impossible d'écrire dans $rc_file — le chemin Go est appliqué pour cette session uniquement."
+        fi
+    fi
+
+    case ":$PATH:" in
+        *":$HOME/go/bin:"*) ;;
+        *) export PATH="$PATH:$HOME/go/bin" ;;
+    esac
+}
+
+#------------------------------------------------------------------------------
 #  Installation par type de manifeste (commune aux modes install/update)
 #  Chaque fonction attend :
 #    $1 = dossier du Rivet (ex: rivets/web)
@@ -122,6 +149,95 @@ install_pip_from_rivet() {
     msg_ok "$ok outil(s) pip installé(s) sur $total."
 }
 
+#------------------------------------------------------------------------------
+#  4 — Environnement shell zsh : installation de zsh, Oh-My-Zsh et plugins
+#------------------------------------------------------------------------------
+install_shell_environment() {
+    msg_info "Installation de l'environnement shell zsh ..."
+
+    # Installation de zsh
+    if ! command -v zsh >/dev/null 2>&1; then
+        if pkg install -y zsh 2>/dev/null; then
+            msg_ok "zsh installé."
+        else
+            msg_err "Échec de l'installation de zsh — continuation sans zsh."
+        fi
+    else
+        msg_info "zsh déjà présent, on passe."
+    fi
+
+    # Installation non-interactive d'Oh-My-Zsh si absent
+    if [ ! -f "$HOME/.oh-my-zsh/oh-my-zsh.sh" ]; then
+        msg_info "Installation d'Oh-My-Zsh (non-interactif) ..."
+        if sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended 2>/dev/null; then
+            msg_ok "Oh-My-Zsh installé."
+        else
+            msg_err "Échec de l'installation d'Oh-My-Zsh — continuation."
+        fi
+    else
+        msg_info "Oh-My-Zsh déjà présent, on passe."
+    fi
+
+    # Clonage de zsh-autosuggestions dans le dossier custom d'Oh-My-Zsh
+    local zsh_autosuggestions_dir="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/zsh-autosuggestions"
+    if [ ! -d "$zsh_autosuggestions_dir" ]; then
+        msg_info "Clone de zsh-autosuggestions ..."
+        if ! git clone https://github.com/zsh-users/zsh-autosuggestions "$zsh_autosuggestions_dir" 2>/dev/null; then
+            msg_err "Échec du clone de zsh-autosuggestions — continuation."
+        else
+            msg_ok "zsh-autosuggestions cloné."
+        fi
+    else
+        msg_info "zsh-autosuggestions déjà présent, on passe."
+    fi
+
+    # Ajout de zsh-autosuggestions à la liste des plugins actifs dans .zshrc
+    local zshrc="$HOME/.zshrc"
+    if [ -f "$zshrc" ]; then
+        local plugins_line
+        plugins_line=$(grep -E '^plugins=\(.*\)$' "$zshrc" 2>/dev/null || true)
+        local existing_plugins=""
+        if [ -n "$plugins_line" ]; then
+            existing_plugins="${plugins_line#plugins=(}"
+            existing_plugins="${existing_plugins%)}"
+        fi
+
+        local plugin_to_add="zsh-autosuggestions"
+        local new_plugins
+
+        # Déjà présent ? on ne duplique pas
+        if [[ " $existing_plugins " == *" $plugin_to_add "* ]]; then
+            msg_info "zsh-autosuggestions déjà dans les plugins, on ne duplique pas."
+        else
+            if [ -n "$existing_plugins" ]; then
+                new_plugins="${existing_plugins} $plugin_to_add"
+            else
+                new_plugins="$plugin_to_add"
+            fi
+
+            # Remplacer la ligne plugins= par la nouvelle version (sans écraser d'autres plugins)
+            # Si la ligne n'existe pas, on l'ajoute à la fin du fichier
+            if grep -qE '^plugins=' "$zshrc" 2>/dev/null; then
+                if sed -i "s/^plugins=(.*)$/plugins=(${new_plugins})/" "$zshrc" 2>/dev/null; then
+                    msg_info "Plugins mis à jour dans $zshrc — relance ton terminal ou fais 'source $zshrc'."
+                else
+                    msg_info "Impossible de modifier $zshrc — plugins mis à jour pour cette session uniquement."
+                fi
+            else
+                # Ajout de la ligne plugins= en fin de fichier
+                if printf 'plugins=%s
+' "$new_plugins" >> "$zshrc" 2>/dev/null; then
+                    msg_info "Plugins mis à jour dans $zshrc — relance ton terminal ou fais 'source $zshrc'."
+                else
+                    msg_info "Impossible d'ajouter les plugins dans $zshrc — plugins mis à jour pour cette session uniquement."
+                fi
+            fi
+        fi
+    else
+        msg_info "Fichier $zshrc introuvable — plugins mis à jour pour cette session uniquement."
+    fi
+}
+
 #  3 — Outils clonés (clone.list) : ligne « nom=url_git »
 #      Clone dédié dans $TOOLS_DIR, puis installation des dépendances si
 #      requirements.txt.
@@ -185,4 +301,65 @@ install_clone_from_rivet() {
     done < "$clone_list"
 
     msg_ok "$ok outil(s) $etat sur $total."
+}
+#------------------------------------------------------------------------------
+#  Fonction : configure_prompt
+#  Role : configuration interactive du prompt (nom +.theme), appelée UNE SEULE FOIS
+#  lors du premier install.sh. Si config/prompt.conf existe déjà, on skip entirely.
+#  Pose deux questions :
+#    1. Nom à afficher dans le prompt (validation : non vide)
+#    2. Choix de thème couleur (menu numéroté 1-4, défaut 1)
+#  Écrit PROMPT_NAME et PROMPT_THEME dans config/prompt.conf.
+#------------------------------------------------------------------------------
+configure_prompt() {
+    local prompt_conf="$FEROX_HOME/config/prompt.conf"
+
+    # Si config/prompt.conf existe déjà → skip entirely (première update ou réinstall)
+    [ -f "$prompt_conf" ] && {
+        msg_info "config/prompt.conf déjà présent — configuration prompt ignorée."
+        return 0
+    }
+
+    # Question 1 : nom du prompt
+    local name=""
+    while [ -z "$name" ]; do
+        read -p "Quel nom veux-tu afficher dans ton prompt Ferrox ? (ex: Arkane) : " name
+        # Si vide, réinviter (pas de chaîne vide acceptée)
+        if [ -z "$name" ]; then
+            msg_err "Le nom ne peut pas être vide. Réessaie."
+        fi
+    done
+    PROMPT_NAME="$name"
+
+    # Question 2 : choix du thème couleur
+    local theme_choice=""
+    echo "Choisis un thème de couleurs :"
+    echo "  1) Ferrox Rouge   (rouge/orange)"
+    echo "  2) Ferrox Cyan    (bleu/cyan)"
+    echo "  3) Ferrox Vert    (vert/lime)"
+    echo "  4) Ferrox Violet  (violet/magenta)"
+    while [ -z "$theme_choice" ]; do
+        read -p "Choisis un thème de couleurs (1-4, défaut 1) : " theme_choice
+        # Validation : doit être 1-4, entrée = défaut 1
+        case "$theme_choice" in
+            1) theme_choice="rouge" ;;
+            2) theme_choice="cyan" ;;
+            3) theme_choice="vert" ;;
+            4) theme_choice="violet" ;;
+            "")  # entrée vide → défaut 1 (rouge)
+                 theme_choice="rouge"
+                 ;;
+            *)   # invalide → défaut 1 (rouge)
+                 theme_choice="rouge"
+                 ;;
+        esac
+    done
+    PROMPT_THEME="$theme_choice"
+
+    # Écriture dans config/prompt.conf
+    mkdir -p "$FEROX_HOME/config"
+    printf 'PROMPT_NAME="%s"\nPROMPT_THEME="%s"\n' "$PROMPT_NAME" "$PROMPT_THEME" > "$prompt_conf"
+    msg_ok "Configuration prompt enregistrée dans $prompt_conf"
+    msg_info "PROMPT_NAME=$PROMPT_NAME"
+    msg_info "PROMPT_THEME=$PROMPT_THEME"
 }

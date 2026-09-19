@@ -38,6 +38,10 @@ PIP_BIN="pip"                        # « pip » ou « pip3 » selon le système
 #  prérequis. Crée aussi state/ (dossier ET fichiers) s'ils n'existent pas.
 #------------------------------------------------------------------------------
 check_prereqs() {
+    # Corrige d'emblée le PATH (~/go/bin) : même la toute première installation
+    # rend ses binaires Go appellables sans relancer le terminal.
+    ensure_go_path
+
     # Sur un dépôt cloné frais, state/ peut ne pas exister : on crée le
     # dossier ET le fichier active-rivets.txt, sinon le premier `grep` dans
     # install_rivet affiche une erreur parasite ("No such file or directory")
@@ -121,6 +125,21 @@ main() {
     fi
 
     check_prereqs
+
+    # ── NOUVEAU : installation de l'environnement shell zsh ──
+    install_shell_environment
+
+    # ── NOUVEAU : configuration interactive du prompt (première installation uniquement) ──
+    configure_prompt
+
+    # ── NOUVEAU : création du dossier workspace ──
+    mkdir -p "$HOME/workspace"
+    # Ajout de la ligne cd workspace dans .zshrc si pas déjà présent
+    local zshrc_line='cd "$HOME/workspace" 2>/dev/null || true'
+    if [ -f "$HOME/.zshrc" ] && ! grep -qF "$zshrc_line" "$HOME/.zshrc" 2>/dev/null; then
+        printf '%s\n' "$zshrc_line" >> "$HOME/.zshrc" 2>/dev/null
+        msg_info "Ligne 'cd ~/.workspace' ajoutée à ~/.zshrc."
+    fi
 
     if [ "$1" = "all" ]; then
         local rivets_list=()

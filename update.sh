@@ -48,6 +48,10 @@ git -C "$FEROX_HOME" rev-parse --verify --quiet "refs/remotes/origin/$REMOTE_BRA
 #  laisse main() continuer la mise à jour.
 #------------------------------------------------------------------------------
 check_update() {
+    # Ré-applique le correctif PATH (~/go/bin) pour les comptes installés
+    # avant son introduction (idempotent, ne touche le rc que si besoin).
+    ensure_go_path
+
     if [ ! -d "$FEROX_HOME/.git" ]; then
         msg_err "Ferrox n'a pas été installé via git clone, mise à jour impossible."
         exit 1
