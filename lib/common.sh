@@ -166,6 +166,28 @@ install_shell_environment() {
         msg_info "zsh déjà présent, on passe."
     fi
 
+    # Termux : définir zsh comme shell par défaut via termux.properties
+    mkdir -p "$HOME/.termux"
+    local termux_props="$HOME/.termux/termux.properties"
+    touch "$termux_props"
+    if ! grep -qxF 'shell = ' "$termux_props" 2>/dev/null; then
+        local zsh_path
+        zsh_path="$(command -v zsh)"
+        if [ -n "$zsh_path" ]; then
+            echo "shell = $zsh_path" >> "$termux_props"
+            msg_ok "zsh défini comme shell par défaut de Termux."
+            if command -v termux-reload-settings >/dev/null 2>&1; then
+                termux-reload-settings
+            else
+                msg_info "Redémarre Termux pour que le changement de shell prenne effet."
+            fi
+        else
+            msg_err "zsh introuvable après installation — impossible de le définir comme shell par défaut."
+        fi
+    else
+        msg_info "Un shell par défaut est déjà configuré dans termux.properties, on ne le remplace pas."
+    fi
+
     # Installation non-interactive d'Oh-My-Zsh si absent
     if [ ! -f "$HOME/.oh-my-zsh/oh-my-zsh.sh" ]; then
         msg_info "Installation d'Oh-My-Zsh (non-interactif) ..."
@@ -235,6 +257,18 @@ install_shell_environment() {
         fi
     else
         msg_info "Fichier $zshrc introuvable — plugins mis à jour pour cette session uniquement."
+    fi
+
+    # Ferrox : sourcer le thème personnalisé dans .zshrc
+    local zshrc="$HOME/.zshrc"
+    if [ -f "$zshrc" ]; then
+        local theme_source_line="source \"$FEROX_HOME/config/theme.zsh-theme\""
+        if ! grep -qxF "$theme_source_line" "$zshrc" 2>/dev/null; then
+            printf '\n# Ferrox : prompt personnalisé\n%s\n' "$theme_source_line" >> "$zshrc"
+            msg_ok "Thème Ferrox ajouté à $zshrc."
+        else
+            msg_info "Thème Ferrox déjà chargé dans $zshrc, on ne duplique pas."
+        fi
     fi
 }
 
