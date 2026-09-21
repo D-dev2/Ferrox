@@ -149,6 +149,62 @@ install_pip_from_rivet() {
     msg_ok "$ok outil(s) pip installé(s) sur $total."
 }
 
+#  2 bis — Outils pkg Termux (pkg.list) : ligne « nom=paquet_termux »
+#       pkg install est sûr à rejouer (déjà installé → ne fait rien), donc le
+#       mode "update" ne change rien au comportement (reçu par uniformité).
+install_pkg_from_rivet() {
+    local rivet_dir="$1"
+    local mode="${2:-install}"
+    local pkg_list="$rivet_dir/pkg.list"
+    local line name pkg ok=0 total=0
+
+    [ -f "$pkg_list" ] || return 0
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%$'\r'}"   # nettoyage d'éventuelles fins de ligne CRLF
+        case "$line" in
+            ''|'#'*) continue ;;
+        esac
+        name="${line%%=*}"
+        pkg="${line#*=}"
+        [ -z "$pkg" ] && continue
+
+        total=$((total + 1))
+        msg_info "Installation de '$name' (paquet Termux : $pkg) ..."
+        if ! pkg install -y "$pkg"; then
+            msg_err "Échec de l'installation de '$name' (paquet Termux : $pkg)."
+            continue
+        fi
+        ok=$((ok + 1))
+        msg_ok "'$name' installé."
+    done < "$pkg_list"
+
+    msg_ok "$ok outil(s) Termux installé(s) sur $total."
+}
+
+#------------------------------------------------------------------------------
+#  Bannière finale Ferrox (compacte, lisible sur écran étroit, colorée selon
+#  le thème de config/prompt.conf — rouge par défaut si absent).
+#------------------------------------------------------------------------------
+print_ferrox_banner() {
+    local theme="rouge" color="38;5;160"
+    local prompt_conf="$FEROX_HOME/config/prompt.conf"
+
+    [ -f "$prompt_conf" ] && theme="$(sed -n 's/^PROMPT_THEME="\(.*\)"$/\1/p' "$prompt_conf" | head -n 1)"
+    [ -z "$theme" ] && theme="rouge"
+    case "$theme" in
+        cyan)           color="38;5;44" ;;
+        vert|green)     color="38;5;34" ;;
+        violet|magenta) color="38;5;92" ;;
+    esac
+
+    printf '\033[%sm' "$color"
+    printf '%s\n' "┌────────────── Ferrox ──────────────┐"
+    printf '%s\n' "│     outils de pentest — Termux     │"
+    printf '%s\n' "└────────────────────────────────────┘"
+    printf '\033[0m\n'
+}
+
 #------------------------------------------------------------------------------
 #  4 — Environnement shell zsh : installation de zsh, Oh-My-Zsh et plugins
 #------------------------------------------------------------------------------
@@ -168,7 +224,18 @@ install_shell_environment() {
 
     # Installation de tmux (au même endroit que zsh)
     if ! command -v tmux >/dev/null 2>&1; then
-        pkg install -y tmux || msg_err "Échec de l'installation de tmux — continuation."
+        pkg install -y tmux 2>/dev/null || msg_err "Échec de l'installation de tmux — continuation."
+    fi
+
+    # Copie idempotente de la config tmux Ferrox vers ~/.tmux.conf (jamais écrasée)
+    if [ ! -f "$HOME/.tmux.conf" ]; then
+        if cp "$FEROX_HOME/config/tmux.conf" "$HOME/.tmux.conf" 2>/dev/null; then
+            msg_ok "Config tmux Ferrox copiée vers ~/.tmux.conf."
+        else
+            msg_err "Impossible de copier config/tmux.conf vers ~/.tmux.conf — continuation."
+        fi
+    else
+        msg_info "~/.tmux.conf déjà présent, on ne l'écrase pas."
     fi
 
     # Installation non-interactive d'Oh-My-Zsh si absent
@@ -183,59 +250,83 @@ install_shell_environment() {
         msg_info "Oh-My-Zsh déjà présent, on passe."
     fi
 
-    # Clonage de zsh-autosuggestions dans le dossier custom d'Oh-My-Zsh
-    local zsh_autosuggestions_dir="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/zsh-autosuggestions"
-    if [ ! -d "$zsh_autosuggestions_dir" ]; then
-        msg_info "Clone de zsh-autosuggestions ..."
-        if ! git clone https://github.com/zsh-users/zsh-autosuggestions "$zsh_autosuggestions_dir" 2>/dev/null; then
-            msg_err "Échec du clone de zsh-autosuggestions — continuation."
+    # Clonage des plugins Ferrox dans le dossier custom d'Oh-My-Zsh
+    # (zsh-autosuggestions, puis zsh-syntax-highlighting)
+    local omz_plugins=(zsh-autosuggestions zsh-syntax-highlighting)
+    local plugin_name plugin_dst
+    for plugin_name in "${omz_plugins[@]}"; do
+        plugin_dst="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/$plugin_name"
+        if [ ! -d "$plugin_dst" ]; then
+            msg_info "Clone de $plugin_name ..."
+            if ! git clone "https://github.com/zsh-users/$plugin_name" "$plugin_dst" 2>/dev/null; then
+                msg_err "Échec du clone de $plugin_name — continuation."
+            else
+                msg_ok "$plugin_name cloné."
+            fi
         else
-            msg_ok "zsh-autosuggestions cloné."
+            msg_info "$plugin_name déjà présent, on passe."
         fi
-    else
-        msg_info "zsh-autosuggestions déjà présent, on passe."
-    fi
+    done
 
-    # Ajout de zsh-autosuggestions à la liste des plugins actifs dans .zshrc
+    # Ajout des plugins actifs dans .zshrc. zsh-syntax-highlighting doit
+    # TOUJOURS être le DERNIER plugin de la liste (exigence du plugin lui-même).
     local zshrc="$HOME/.zshrc"
     if [ -f "$zshrc" ]; then
-        local plugins_line
-        plugins_line=$(grep -E '^plugins=\(.*\)$' "$zshrc" 2>/dev/null || true)
-        local existing_plugins=""
+        local plugins_line new_plugins plugin_name plugins_filtered plugins_seen
+        # Lit la ligne plugins= existante, qu'elle soit « plugins=(a b) »
+        # ou « plugins=a b » (les deux formes sont tolérées et réparées).
+        plugins_line=$(grep -E '^plugins=' "$zshrc" 2>/dev/null | tail -n 1 || true)
         if [ -n "$plugins_line" ]; then
-            existing_plugins="${plugins_line#plugins=(}"
-            existing_plugins="${existing_plugins%)}"
+            new_plugins="${plugins_line#plugins=(}"
+            if [ "$new_plugins" = "$plugins_line" ]; then
+                new_plugins="${plugins_line#plugins=}"   # forme sans parenthèses
+            else
+                new_plugins="${new_plugins%)}"
+            fi
+        else
+            new_plugins=""
         fi
 
-        local plugin_to_add="zsh-autosuggestions"
-        local new_plugins
-
-        # Déjà présent ? on ne duplique pas
-        if [[ " $existing_plugins " == *" $plugin_to_add "* ]]; then
-            msg_info "zsh-autosuggestions déjà dans les plugins, on ne duplique pas."
-        else
-            if [ -n "$existing_plugins" ]; then
-                new_plugins="${existing_plugins} $plugin_to_add"
+        # 1) Ajout des deux plugins s'ils n'y sont pas (sans doublon)
+        for plugin_name in "${omz_plugins[@]}"; do
+            if [[ " $new_plugins " == *" $plugin_name "* ]]; then
+                msg_info "$plugin_name déjà dans les plugins, on ne duplique pas."
             else
-                new_plugins="$plugin_to_add"
+                if [ -n "$new_plugins" ]; then
+                    new_plugins="${new_plugins} $plugin_name"
+                else
+                    new_plugins="$plugin_name"
+                fi
+                msg_info "Plugin '$plugin_name' ajouté à la liste."
             fi
+        done
 
-            # Remplacer la ligne plugins= par la nouvelle version (sans écraser d'autres plugins)
-            # Si la ligne n'existe pas, on l'ajoute à la fin du fichier
-            if grep -qE '^plugins=' "$zshrc" 2>/dev/null; then
-                if sed -i "s/^plugins=(.*)$/plugins=(${new_plugins})/" "$zshrc" 2>/dev/null; then
-                    msg_info "Plugins mis à jour dans $zshrc — relance ton terminal ou fais 'source $zshrc'."
-                else
-                    msg_info "Impossible de modifier $zshrc — plugins mis à jour pour cette session uniquement."
-                fi
+        # 2) Nettoyage complet (doublons retirés, premier ordre conservé) puis
+        #    zsh-syntax-highlighting TOUJOURS déplacé en dernier de la liste.
+        plugins_filtered=""
+        plugins_seen=""
+        for plugin_name in $new_plugins; do
+            [ "$plugin_name" = "zsh-syntax-highlighting" ] && continue
+            [[ " $plugins_seen " == *" $plugin_name "* ]] && continue
+            plugins_filtered="$plugins_filtered $plugin_name"
+            plugins_seen="$plugins_seen $plugin_name"
+        done
+        plugins_filtered="$plugins_filtered zsh-syntax-highlighting"
+        new_plugins="${plugins_filtered# }"
+
+        # 3) Réécriture de la ligne plugins= (toujours avec parenthèses ;
+        #    en place si la ligne existait, sinon ajout en fin de fichier)
+        if [ -n "$plugins_line" ]; then
+            if sed -i "s/^plugins=.*$/plugins=(${new_plugins})/" "$zshrc" 2>/dev/null; then
+                msg_info "Plugins mis à jour dans $zshrc — relance ton terminal ou fais 'source $zshrc'."
             else
-                # Ajout de la ligne plugins= en fin de fichier
-                if printf 'plugins=%s
-' "$new_plugins" >> "$zshrc" 2>/dev/null; then
-                    msg_info "Plugins mis à jour dans $zshrc — relance ton terminal ou fais 'source $zshrc'."
-                else
-                    msg_info "Impossible d'ajouter les plugins dans $zshrc — plugins mis à jour pour cette session uniquement."
-                fi
+                msg_info "Impossible de modifier $zshrc — plugins mis à jour pour cette session uniquement."
+            fi
+        else
+            if printf 'plugins=(%s)\n' "$new_plugins" >> "$zshrc" 2>/dev/null; then
+                msg_info "Plugins mis à jour dans $zshrc — relance ton terminal ou fais 'source $zshrc'."
+            else
+                msg_info "Impossible d'ajouter les plugins dans $zshrc — plugins mis à jour pour cette session uniquement."
             fi
         fi
     else
@@ -262,6 +353,17 @@ install_shell_environment() {
         fi
     fi
 
+    # ── BUG 1 : lève le conflit alias gau (plugin git d'Oh-My-Zsh) ──
+    # L'alias `gau` = « git add --update » du plugin git masquerait le binaire
+    # gau (getallurls) installé par le Rivet web. Idempotent, même pattern
+    # que le bloc thème existant.
+    local unalias_line="unalias gau 2>/dev/null || true"
+    if ! grep -qxF "$unalias_line" "$zshrc" 2>/dev/null; then
+        printf '\n# Ferrox : lève le conflit alias gau (plugin git Oh-My-Zsh)\n%s\n' \
+            "$unalias_line" >> "$zshrc"
+        msg_ok "Correctif alias gau ajouté à $zshrc."
+    fi
+
     # ── BUG A : second appel à ensure_go_path, À LA FIN ──
     # Le premier appel (dans check_prereqs) tournait AVANT la création de
     # .zshrc par Oh-My-Zsh → la ligne PATH tombait dans .bashrc (fallback).
@@ -270,7 +372,7 @@ install_shell_environment() {
     ensure_go_path
 
     # Message chsh au lieu de modification automatique de termux.properties
-    msg_info "Pour que zsh s'ouvre automatiquement à chaque lancement de Termux, tape : chsh -s zsh"
+    msg_info "→ Tape : chsh -s zsh (pour que zsh s'ouvre automatiquement à chaque lancement de Termux)"
 }
 
 #  3 — Outils clonés (clone.list) : ligne « nom=url_git »
@@ -338,7 +440,9 @@ install_clone_from_rivet() {
         if [ "$name" = "ghauri" ]; then
             msg_info "Installation de ghauri ..."
             if [ -d "$TOOLS_DIR/ghauri" ]; then
-                if ! (cd "$TOOLS_DIR/ghauri" && python3 setup.py install) 2>/dev/null; then
+                # Sans 2>/dev/null : si ça échoue encore, la vraie erreur doit
+                # apparaître dans install.log (ex: setuptools manquant).
+                if ! (cd "$TOOLS_DIR/ghauri" && python3 setup.py install); then
                     msg_err "Échec de l'installation de ghauri — continuation."
                 else
                     msg_ok "ghauri installé."

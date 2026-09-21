@@ -2,8 +2,8 @@
 #=============================================================================
 #  Ferrox — install.sh (installation initiale d'un ou plusieurs Rivets)
 #-----------------------------------------------------------------------------
-#  Rôle : installer TOUS les outils d'un Rivet depuis ses 3 manifestes
-#  (go.lock, pip.list, clone.list), puis enregistrer le Rivet dans
+#  Rôle : installer TOUS les outils d'un Rivet depuis ses 4 manifestes
+#  (go.lock, pip.list, clone.list, pkg.list), puis enregistrer le Rivet dans
 #  state/active-rivets.txt.
 #
 #  Appel : bash install.sh <rivet1> [rivet2 ...]
@@ -66,6 +66,12 @@ check_prereqs() {
         msg_err "pip est introuvable. Installe-le avec : pkg install python"
         exit 1
     fi
+
+    # BUG 3 : setuptools et wheel sont réclamés par certains « setup.py install »
+    # des outils clonés (ex : ghauri → ModuleNotFoundError). Mise à jour
+    # silencieuse, non bloquante (prévenu seulement si elle échoue).
+    "$PIP_BIN" install --upgrade setuptools wheel >/dev/null 2>&1 || \
+        msg_err "Échec de l'installation de setuptools/wheel — certains outils clonés (ex: ghauri) risquent de ne pas s'installer."
     if ! command -v git >/dev/null 2>&1; then
         msg_err "git est introuvable. Installe-le avec : pkg install git"
         exit 1
@@ -74,14 +80,15 @@ check_prereqs() {
 }
 
 #------------------------------------------------------------------------------
-#  Section 2 : installation par type de manifeste (Go / pip / clone)
+#  Section 2 : installation par type de manifeste (Go / pip / clone / pkg)
 #  Implémentée dans lib/common.sh (install_go_from_rivet, install_pip_from_rivet,
-#  install_clone_from_rivet) — appelée ici avec mode "install" par défaut.
+#  install_clone_from_rivet, install_pkg_from_rivet) — appelée ici avec mode
+#  "install" par défaut.
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
 #  Section 3 : installation complète d'un Rivet
-#  Vérifie l'existence de rivets/$rivet/meta.json, appelle les 3 fonctions
+#  Vérifie l'existence de rivets/$rivet/meta.json, appelle les 4 fonctions
 #  ci-dessus, puis ajoute $rivet à state/active-rivets.txt (sans doublon —
 #  ce fichier est l'unique source de vérité). Un Rivet inconnu renvoie 1
 #  (pas exit) pour ne pas couper les autres Rivets demandés en ligne de
@@ -99,6 +106,7 @@ install_rivet() {
     install_go_from_rivet "$RIVETS_DIR/$rivet"
     install_pip_from_rivet "$RIVETS_DIR/$rivet"
     install_clone_from_rivet "$RIVETS_DIR/$rivet"
+    install_pkg_from_rivet "$RIVETS_DIR/$rivet"
 
     # Idempotent : on n'ajoute la ligne que si elle n'y est pas déjà.
     if ! grep -qxF "$rivet" "$STATE_FILE"; then
@@ -165,8 +173,11 @@ main() {
         fi
     done
 
-    # Écran propre avant le résumé final (point 4 des correctifs)
+    # Écran propre avant la bannière et le résumé final (point 4 des correctifs)
     clear
+
+    # ── NOUVEAU : bannière Ferrox finale (compacte, colorée selon le thème) ──
+    print_ferrox_banner
 
     # Résumé global fidèle : distingue succès et échecs plutôt qu'un
     # "Installation terminée" ambigu qui masquerait un Rivet introuvable.
@@ -177,6 +188,9 @@ main() {
     fi
 
     msg_info "Journal détaillé disponible dans : $LOG_FILE"
+
+    # Message final bien visible, point d'attention numéro 1 pour un débutant.
+    printf '\n%s\n' "→ Tape : chsh -s zsh (pour que zsh s'ouvre automatiquement à chaque lancement de Termux)"
 }
 
 main "$@"

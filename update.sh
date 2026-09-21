@@ -157,6 +157,7 @@ update_installed_rivets() {
         install_go_from_rivet "$RIVETS_DIR/$rivet" update
         install_pip_from_rivet "$RIVETS_DIR/$rivet" update
         install_clone_from_rivet "$RIVETS_DIR/$rivet" update
+        install_pkg_from_rivet "$RIVETS_DIR/$rivet" update
         RIVETS_UPDATED_OK=$((RIVETS_UPDATED_OK + 1))
     done < "$STATE_FILE"
 }

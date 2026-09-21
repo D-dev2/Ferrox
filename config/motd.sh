@@ -51,7 +51,7 @@ check_masked_aliases() {
             ''|'#'*) continue ;;
         esac
         [ -f "$RIVETS_DIR/$rivet/meta.json" ] || continue
-        for mf in go.lock pip.list clone.list; do
+        for mf in go.lock pip.list clone.list pkg.list; do
             file="$RIVETS_DIR/$rivet/$mf"
             [ -f "$file" ] || continue
             while IFS= read -r line || [ -n "$line" ]; do

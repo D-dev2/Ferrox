@@ -1,13 +1,17 @@
 #=============================================================================
 #  Ferrox — config/theme.zsh-theme (thème Zsh du prompt)
 #-----------------------------------------------------------------------------
-#  Rôle : thème de prompt Ferrox — format compact sur 2 lignes.
+#  Rôle : thème de prompt Ferrox — format « carte d'identité avec cadre ».
 #
-#    Ligne 1 : [HH:MM:SS | git(branche)-] ferrox-NOM user- ~/chemin
-#    Ligne 2 : ∆-
+#    Ligne 1 : ╭─ HH:MM:SS ─ git(branche) ─ ferrox-NOM
+#    Ligne 2 : ╰─ ~/chemin ➜
 #
-#  Chaque segment est coloré avec PROMPT_THEME (lu dans config/prompt.conf) :
-#    rouge→red, cyan→cyan, vert→green, violet→magenta.
+#  3 couleurs par thème (une par segment, jamais une seule répétée) :
+#    rouge : C_TIME=160 (rouge)       C_GIT=94 (marron)   C_NAME=223 (crème)
+#    cyan  : C_TIME=44  (cyan)        C_GIT=17  (bleu marine) C_NAME=189 (lavande)
+#    vert  : C_TIME=61  (indigo)      C_GIT=34  (vert)    C_NAME=230 (crème)
+#    violet: C_TIME=92  (violet)      C_GIT=132 (mauve)   C_NAME=183 (lavande)
+#  Le cadre lui-même (╭─ ╰─ ➜) reprend C_TIME (couleur dominante du thème).
 #=============================================================================
 
 setopt PROMPT_SUBST
@@ -21,53 +25,50 @@ source "$FEROX_HOME/config/prompt.conf"
 
 #------------------------------------------------------------------------------
 #  Section 2 : palette de couleurs selon le thème choisi
+#  Chaque segment reçoit une couleur distincte (jamais une seule répétée).
 #------------------------------------------------------------------------------
 case "$PROMPT_THEME" in
-    rouge|red)   THEME_COLOR="%F{red}"     THEME_RESET="%f" ;;
-    cyan)        THEME_COLOR="%F{cyan}"    THEME_RESET="%f" ;;
-    vert|green)  THEME_COLOR="%F{green}"   THEME_RESET="%f" ;;
-    violet|magenta) THEME_COLOR="%F{magenta}" THEME_RESET="%f" ;;
-    *)           THEME_COLOR="%F{red}"     THEME_RESET="%f" ;;
+    cyan)
+        C_TIME="%F{44}"   C_GIT="%F{17}"   C_NAME="%F{189}" ;;
+    vert|green)
+        C_TIME="%F{61}"   C_GIT="%F{34}"   C_NAME="%F{230}" ;;
+    violet|magenta)
+        C_TIME="%F{92}"   C_GIT="%F{132}"  C_NAME="%F{183}" ;;
+    rouge|red|*)
+        C_TIME="%F{160}"  C_GIT="%F{94}"   C_NAME="%F{223}" ;;
 esac
+C_RESET="%f"
 
 #------------------------------------------------------------------------------
 #  Section 3 : segment git — appelé à CHAQUE affichage du prompt (PROMPT_SUBST).
-#  Retourne "git(branche)-" si on est dans un dépôt git, sinon "git()-".
+#  Retourne "git(branche)" si on est dans un dépôt git, sinon "git()".
 #------------------------------------------------------------------------------
 _ferrox_git_seg() {
     local branch
     branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
     if [ -n "$branch" ]; then
-        printf 'git(%s)-' "$branch"
+        printf 'git(%s)' "$branch"
     else
-        printf 'git()-'
+        printf 'git()'
     fi
 }
 
 #------------------------------------------------------------------------------
-#  Section 4 : segment user — résultat de `whoami`, appelé à chaque prompt.
-#------------------------------------------------------------------------------
-_ferrox_user_seg() {
-    whoami 2>/dev/null
-}
-
-#------------------------------------------------------------------------------
-#  Section 5 : construction du PROMPT (2 lignes)
-#    Ligne 1 : [HH:MM:SS | git(branche)-] ferrox-NOM user- ~/chemin
-#      - HH:MM:SS via %D{%H:%M:%S} (natif zsh)
-#      - ~/chemin via %~ (natif zsh)
-#    Ligne 2 : ∆- dans la couleur du thème
+#  Section 4 : construction du PROMPT (cadre sur 2 lignes)
 #
-#  Timing (IMPORTANT) : les substitutions dynamiques $(_ferrox_git_seg) et
-#  $(_ferrox_user_seg) sont écrites en SIMPLE guillemets → elles restent
-#  en texte littéral dans $PROMPT1 et c'est PROMPT_SUBST qui les évalue À
-#  CHAQUE affichage du prompt (branch git et whoami à jour en direct).
-#  Les variables de thème (${THEME_COLOR}, ${THEME_RESET}) et le nom
-#  (${PROMPT_NAME}) restent en DOUBLE guillemets : interpolées une seule
-#  fois à l'assignation, elles n'ont pas à être réévaluées.
+#    Ligne 1 : ╭─ HH:MM:SS ─ git(branche) ─ ferrox-NOM
+#    Ligne 2 : ╰─ ~/chemin ➜        (l'espace après la flèche = position du curseur)
+#
+#  Timing (IMPORTANT) : $(_ferrox_git_seg) est écrit en SIMPLE guillemets dans
+#  PROMPT1 → il reste en texte littéral au moment de l'assignation et c'est
+#  PROMPT_SUBST qui l'évalue À CHAQUE affichage du prompt (branche à jour en
+#  direct). Les variables de thème (${C_TIME}, ${C_GIT}, ${C_NAME}, ${C_RESET})
+#  et le nom (${PROMPT_NAME}) restent en DOUBLE guillemets : interpolées une
+#  seule fois à l'assignation, elles n'ont pas à être réévaluées.
+#  Le cadre (╭─ ╰─ ➜) est coloré avec C_TIME, la couleur dominante du thème.
 #------------------------------------------------------------------------------
-PROMPT1="[${THEME_COLOR}%D{%H:%M:%S}${THEME_RESET} | ${THEME_COLOR}"'$(_ferrox_git_seg)'"${THEME_RESET}] ${THEME_COLOR}ferrox-${PROMPT_NAME}${THEME_RESET} ${THEME_COLOR}"'$(_ferrox_user_seg)'"-${THEME_RESET} ${THEME_COLOR}%~${THEME_RESET}"
+PROMPT1="${C_TIME}╭─ %D{%H:%M:%S}${C_RESET} ─ ${C_GIT}"'$(_ferrox_git_seg)'"${C_RESET} ─ ${C_NAME}ferrox-${PROMPT_NAME}${C_RESET}"
 
-PROMPT2="${THEME_COLOR}∆-${THEME_RESET}"
+PROMPT2="${C_TIME}╰─ %~ ➜ ${C_RESET}"
 
 PROMPT="$PROMPT1"$'\n'"$PROMPT2"
