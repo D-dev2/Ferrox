@@ -165,6 +165,9 @@ main() {
         fi
     done
 
+    # Écran propre avant le résumé final (point 4 des correctifs)
+    clear
+
     # Résumé global fidèle : distingue succès et échecs plutôt qu'un
     # "Installation terminée" ambigu qui masquerait un Rivet introuvable.
     if [ "$rivets_fail" -eq 0 ]; then

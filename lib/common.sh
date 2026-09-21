@@ -166,26 +166,9 @@ install_shell_environment() {
         msg_info "zsh déjà présent, on passe."
     fi
 
-    # Termux : définir zsh comme shell par défaut via termux.properties
-    mkdir -p "$HOME/.termux"
-    local termux_props="$HOME/.termux/termux.properties"
-    touch "$termux_props"
-    if ! grep -qxF 'shell = ' "$termux_props" 2>/dev/null; then
-        local zsh_path
-        zsh_path="$(command -v zsh)"
-        if [ -n "$zsh_path" ]; then
-            echo "shell = $zsh_path" >> "$termux_props"
-            msg_ok "zsh défini comme shell par défaut de Termux."
-            if command -v termux-reload-settings >/dev/null 2>&1; then
-                termux-reload-settings
-            else
-                msg_info "Redémarre Termux pour que le changement de shell prenne effet."
-            fi
-        else
-            msg_err "zsh introuvable après installation — impossible de le définir comme shell par défaut."
-        fi
-    else
-        msg_info "Un shell par défaut est déjà configuré dans termux.properties, on ne le remplace pas."
+    # Installation de tmux (au même endroit que zsh)
+    if ! command -v tmux >/dev/null 2>&1; then
+        pkg install -y tmux || msg_err "Échec de l'installation de tmux — continuation."
     fi
 
     # Installation non-interactive d'Oh-My-Zsh si absent
@@ -259,17 +242,35 @@ install_shell_environment() {
         msg_info "Fichier $zshrc introuvable — plugins mis à jour pour cette session uniquement."
     fi
 
-    # Ferrox : sourcer le thème personnalisé dans .zshrc
+    # Ferrox : sourcer le thème personnalisé dans .zshrc avec export FEROX_HOME en tête
     local zshrc="$HOME/.zshrc"
     if [ -f "$zshrc" ]; then
+        local export_line="export FEROX_HOME=\"$FEROX_HOME\""
         local theme_source_line="source \"$FEROX_HOME/config/theme.zsh-theme\""
         if ! grep -qxF "$theme_source_line" "$zshrc" 2>/dev/null; then
-            printf '\n# Ferrox : prompt personnalisé\n%s\n' "$theme_source_line" >> "$zshrc"
+            printf '\n# Ferrox : chemin d'\''installation et prompt personnalisé\n%s\n%s\n' \
+                "$export_line" "$theme_source_line" >> "$zshrc"
             msg_ok "Thème Ferrox ajouté à $zshrc."
         else
             msg_info "Thème Ferrox déjà chargé dans $zshrc, on ne duplique pas."
+            # Si le thème est déjà présent mais que l'export FEROX_HOME est
+            # absent ou mal placé, vérifie sa présence et corrige si besoin :
+            if ! grep -qxF "$export_line" "$zshrc" 2>/dev/null; then
+                sed -i "1i $export_line" "$zshrc"
+                msg_ok "export FEROX_HOME ajouté en tête de $zshrc (correctif rétroactif)."
+            fi
         fi
     fi
+
+    # ── BUG A : second appel à ensure_go_path, À LA FIN ──
+    # Le premier appel (dans check_prereqs) tournait AVANT la création de
+    # .zshrc par Oh-My-Zsh → la ligne PATH tombait dans .bashrc (fallback).
+    # Ici, .zshrc existe : ensure_go_path (idempotent via grep -qxF) écrit
+    # dans .zshrc, donc la ligne PATH reste persistée au bon endroit.
+    ensure_go_path
+
+    # Message chsh au lieu de modification automatique de termux.properties
+    msg_info "Pour que zsh s'ouvre automatiquement à chaque lancement de Termux, tape : chsh -s zsh"
 }
 
 #  3 — Outils clonés (clone.list) : ligne « nom=url_git »
@@ -330,6 +331,18 @@ install_clone_from_rivet() {
             msg_info "Installation des dépendances de '$name' ..."
             if ! "$PIP_BIN" install -r "$TOOLS_DIR/$name/requirements.txt"; then
                 msg_err "Échec des dépendances de '$name' (voir l'erreur ci-dessus)."
+            fi
+        fi
+
+        # Installation spécifique pour ghauri
+        if [ "$name" = "ghauri" ]; then
+            msg_info "Installation de ghauri ..."
+            if [ -d "$TOOLS_DIR/ghauri" ]; then
+                if ! (cd "$TOOLS_DIR/ghauri" && python3 setup.py install) 2>/dev/null; then
+                    msg_err "Échec de l'installation de ghauri — continuation."
+                else
+                    msg_ok "ghauri installé."
+                fi
             fi
         fi
     done < "$clone_list"
